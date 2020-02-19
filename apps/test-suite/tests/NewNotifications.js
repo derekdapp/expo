@@ -2,8 +2,9 @@
 
 import { Platform } from '@unimodules/core';
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system';
+import * as Notifications from 'expo-notifications';
 
 import * as TestUtils from '../TestUtils';
 import { waitFor } from './helpers';
@@ -276,6 +277,104 @@ export async function test(t) {
         });
       });
     });
+
+    t.describe('Notification channels', () => {
+      const testChannelId = 'test-channel-id';
+      const testChannel = {
+        name: 'Test channel',
+      };
+
+      t.describe('getNotificationChannelsAsync()', () => {
+        t.it('returns an array', async () => {
+          const channels = await Notifications.getNotificationChannelsAsync();
+          t.expect(channels).toEqual(t.jasmine.any(Array));
+        });
+
+        // Test push notifications sent without a channel ID should create a fallback channel
+        if (Platform.OS === 'android' && Device.platformApiLevel >= 26) {
+          t.it('contains the fallback channel', async () => {
+            const channels = await Notifications.getNotificationChannelsAsync();
+            t.expect(channels).toContain(
+              t.jasmine.objectContaining({
+                // Implementation detail!
+                id: 'expo_notifications_fallback_notification_channel',
+                name: 'Miscellaneous',
+              })
+            );
+          });
+        }
+      });
+
+      t.describe('createNotificationChannelAsync()', () => {
+        if (Platform.OS === 'android' && Device.platformApiLevel >= 26) {
+          t.it('creates a channel', async () => {
+            const preChannels = await Notifications.getNotificationChannelsAsync();
+            const channelSpec = t.jasmine.objectContaining({ ...testChannel, id: testChannelId });
+            t.expect(preChannels).not.toContain(channelSpec);
+            await Notifications.createNotificationChannelAsync(testChannelId, testChannel);
+            const postChannels = await Notifications.getNotificationChannelsAsync();
+            await Notifications.deleteNotificationChannelAsync(testChannelId);
+            t.expect(postChannels).toContain(channelSpec);
+            t.expect(postChannels.length).toBeGreaterThan(preChannels.length);
+          });
+        } else {
+          t.it("doesn't throw an error", async () => {
+            await Notifications.createNotificationChannelAsync(testChannelId, testChannel);
+          });
+        }
+      });
+
+      t.describe('updateNotificationChannelAsync()', () => {
+        if (Platform.OS === 'android' && Device.platformApiLevel >= 26) {
+          t.it('updates a channel', async () => {
+            const id = 'updated-channel-id';
+            await Notifications.createNotificationChannelAsync(id, {
+              name: 'Name before change',
+            });
+            await Notifications.updateNotificationChannelAsync(id, {
+              name: 'Name after change',
+            });
+            const channels = await Notifications.getNotificationChannelsAsync();
+            await Notifications.deleteNotificationChannelAsync(id);
+            t.expect(channels).toContain(
+              t.jasmine.objectContaining({
+                name: 'Name after change',
+                id,
+              })
+            );
+            t.expect(channels).not.toContain(
+              t.jasmine.objectContaining({
+                name: 'Name before change',
+                id,
+              })
+            );
+          });
+        } else {
+          t.it("doesn't throw an error", async () => {
+            await Notifications.updateNotificationChannelAsync(testChannelId, testChannel);
+          });
+        }
+      });
+
+      t.describe('deleteNotificationChannelAsync()', () => {
+        if (Platform.OS === 'android' && Device.platformApiLevel >= 26) {
+          t.it('deletes a channel', async () => {
+            const preChannels = await Notifications.getNotificationChannelsAsync();
+            const channelSpec = t.jasmine.objectContaining({ ...testChannel, id: testChannelId });
+            t.expect(preChannels).not.toContain(channelSpec);
+            await Notifications.createNotificationChannelAsync(testChannelId, testChannel);
+            const postChannels = await Notifications.getNotificationChannelsAsync();
+            await Notifications.deleteNotificationChannelAsync(testChannelId);
+            t.expect(postChannels).toContain(channelSpec);
+            t.expect(postChannels.length).toBeGreaterThan(preChannels.length);
+          });
+        } else {
+          t.it("doesn't throw an error", async () => {
+            await Notifications.deleteNotificationChannelAsync(testChannelId, testChannel);
+          });
+        }
+      });
+    });
   });
 }
 
@@ -293,6 +392,9 @@ async function sendTestPushNotification(expoPushToken, notificationOverrides) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify([
+      // No specific channel ID forces the package to create a fallback channel
+      // to present the notification on newer Android devices. One of the tests
+      // ensures that the fallback channel is created.
       {
         to: expoPushToken,
         title: 'Hello from Expo server!',
